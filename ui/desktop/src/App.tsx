@@ -57,6 +57,7 @@ import { trackErrorWithContext } from './utils/analytics';
 import { AppEvents } from './constants/events';
 import { registerPlatformEventHandlers } from './utils/platform_events';
 import { reconnectAcpAfterSystemResume } from './acp/acpConnection';
+import { useLiveVoice, type LiveVoiceController } from './liveVoice/useLiveVoice';
 
 function PageViewTracker() {
   usePageViewTracking();
@@ -64,9 +65,15 @@ function PageViewTracker() {
 }
 
 // Route Components
-const HubRouteWrapper = ({ draftRef }: { draftRef: RefObject<string> }) => {
+const HubRouteWrapper = ({
+  draftRef,
+  liveVoice,
+}: {
+  draftRef: RefObject<string>;
+  liveVoice: LiveVoiceController;
+}) => {
   const setView = useNavigation();
-  return <Hub setView={setView} draftRef={draftRef} />;
+  return <Hub setView={setView} draftRef={draftRef} liveVoice={liveVoice} />;
 };
 
 export function resolveSessionInitialMessage(
@@ -328,7 +335,17 @@ export function AppInner() {
   const nostrImportInFlight = useRef<string | null>(null);
 
   const navigate = useNavigate();
+  const location = useLocation();
   const setView = useNavigation();
+  const liveVoice = useLiveVoice();
+  const { activeSessionId: activeLiveVoiceSessionId, stop: stopLiveVoice } = liveVoice;
+
+  useEffect(() => {
+    const hasLiveVoiceEntryPoint = location.pathname === '/' || location.pathname === '/pair';
+    if (!hasLiveVoiceEntryPoint && activeLiveVoiceSessionId) {
+      void stopLiveVoice();
+    }
+  }, [activeLiveVoiceSessionId, location.pathname, stopLiveVoice]);
 
   const [chat, setChat] = useState<ChatType>({
     sessionId: '',
@@ -662,12 +679,15 @@ export function AppInner() {
               element={
                 <OnboardingGuard>
                   <ChatProvider chat={chat} setChat={setChat} contextKey="hub">
-                    <AppLayout activeSessions={activeSessions} />
+                    <AppLayout activeSessions={activeSessions} liveVoice={liveVoice} />
                   </ChatProvider>
                 </OnboardingGuard>
               }
             >
-              <Route index element={<HubRouteWrapper draftRef={hubDraftRef} />} />
+              <Route
+                index
+                element={<HubRouteWrapper draftRef={hubDraftRef} liveVoice={liveVoice} />}
+              />
               <Route
                 path="pair"
                 element={
