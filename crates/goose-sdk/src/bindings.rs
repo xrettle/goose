@@ -490,8 +490,9 @@ pub struct ProviderModelConfig {
 }
 
 impl ProviderModelConfig {
-    fn to_goose_model_config(&self) -> Result<ModelConfig, GooseError> {
+    fn to_goose_model_config(&self, provider_name: &str) -> Result<ModelConfig, GooseError> {
         let mut config = ModelConfig::new(&self.model_name)
+            .with_canonical_vision_support(provider_name)
             .with_temperature(self.temperature)
             .with_max_tokens(self.max_tokens)
             .with_toolshim(self.toolshim)
@@ -754,7 +755,7 @@ impl ProviderHandle {
         tools: Vec<ProviderTool>,
     ) -> Result<Arc<ProviderStream>, GooseError> {
         let timeout_ms = model.timeout_ms;
-        let model = model.to_goose_model_config()?;
+        let model = model.to_goose_model_config(self.provider.get_name())?;
         let messages = convert_messages(messages)?;
         let tools = convert_tools(tools)?;
         let observer = Arc::new(RequestObserver::start(RequestDescriptor {
@@ -797,7 +798,7 @@ impl ProviderHandle {
         tools: Vec<ProviderTool>,
     ) -> Result<ProviderCompletion, GooseError> {
         let timeout_ms = model.timeout_ms;
-        let model = model.to_goose_model_config()?;
+        let model = model.to_goose_model_config(self.provider.get_name())?;
         let messages = convert_messages(messages)?;
         let tools = convert_tools(tools)?;
         let observer = RequestObserver::start(RequestDescriptor {
@@ -1690,7 +1691,7 @@ mod tests {
             ..base_model_config()
         };
 
-        assert!(config.to_goose_model_config().is_err());
+        assert!(config.to_goose_model_config("openai").is_err());
     }
 
     #[test]
