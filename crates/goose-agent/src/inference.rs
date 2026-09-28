@@ -131,6 +131,24 @@ fn is_empty_response(message: &Message) -> bool {
     })
 }
 
+pub fn ends_with_successful_tool_response(messages: &[Message]) -> bool {
+    let Some(message) = messages.last() else {
+        return false;
+    };
+    let mut responses = message
+        .content
+        .iter()
+        .filter_map(MessageContent::as_tool_response)
+        .peekable();
+    responses.peek().is_some()
+        && responses.all(|response| {
+            response
+                .tool_result
+                .as_ref()
+                .is_ok_and(|result| !result.is_error.unwrap_or(false))
+        })
+}
+
 fn record_request_params(span: &tracing::Span, model_config: &ModelConfig) {
     if let Some(temperature) = model_config.temperature {
         span.record("gen_ai.request.temperature", temperature as f64);
@@ -172,7 +190,11 @@ pub struct InferenceRunner<'a, S, E> {
 
 /// The agent-visible conversation as the provider sees it: tool requests left
 /// unanswered by an earlier turn are dropped, since nothing will answer them now.
-fn messages_for_provider(conversation: &Conversation, turn: &[Message]) -> Vec<Message> {
+fn messages_for_provider(
+    conversation: &Conversation,
+    turn: &[Message],
+    keep_empty_messages: bool,
+) -> Vec<Message> {
     let answered: std::collections::HashSet<&str> = conversation
         .messages()
         .iter()
@@ -194,7 +216,7 @@ fn messages_for_provider(conversation: &Conversation, turn: &[Message]) -> Vec<M
             }
             message
         })
-        .filter(|message| !message.content.is_empty())
+        .filter(|message| keep_empty_messages || !message.content.is_empty())
         .collect()
 }
 
@@ -218,6 +240,17 @@ fn ends_with_provider_turn(messages: &[Message]) -> bool {
             EffectiveRole::User | EffectiveRole::Tool
         )
     })
+}
+
+fn should_infer(conversation: &Conversation, turn: &[Message]) -> bool {
+    let projected = messages_for_provider(conversation, turn, true);
+    if projected
+        .last()
+        .is_some_and(|message| message.content.is_empty())
+    {
+        return false;
+    }
+    ends_with_provider_turn(&messages_for_provider(conversation, turn, false))
 }
 
 fn cancellation_response(persisted: &[Message], pending: &[Message]) -> Option<Message> {
@@ -325,8 +358,7 @@ impl<S: Sync, E: InferenceEffect> Inference<S, E> for InferenceRunner<'_, S, E> 
         let Ok(turn) = messages_since_kickoff(conversation) else {
             return false;
         };
-        trailing_error(conversation).is_none()
-            && ends_with_provider_turn(&messages_for_provider(conversation, turn))
+        trailing_error(conversation).is_none() && should_infer(conversation, turn)
     }
 
     async fn infer(
@@ -341,10 +373,10 @@ impl<S: Sync, E: InferenceEffect> Inference<S, E> for InferenceRunner<'_, S, E> 
             return not_applicable();
         }
 
-        let mut messages_for_provider = messages_for_provider(conversation, messages);
-        if !ends_with_provider_turn(&messages_for_provider) {
+        if !should_infer(conversation, messages) {
             return not_applicable();
         }
+        let mut messages_for_provider = messages_for_provider(conversation, messages, false);
 
         let span = inference_span(self.provider.as_ref(), &self.model_config);
 
@@ -479,6 +511,7 @@ impl<S: Sync, E: InferenceEffect> Inference<S, E> for InferenceRunner<'_, S, E> 
             }
 
             let empty_response = !cancelled
+                && !ends_with_successful_tool_response(conversation.messages())
                 && !accumulator
                     .iter()
                     .any(|message| message.metadata.output_token_limit_reached)
@@ -490,7 +523,24 @@ impl<S: Sync, E: InferenceEffect> Inference<S, E> for InferenceRunner<'_, S, E> 
                 return yielded_with(usage_effects);
             }
 
-            usage_effects.extend(accumulator.into_iter().map(|message| E::from(message)));
+            if ends_with_successful_tool_response(conversation.messages())
+                && !accumulator
+                    .iter()
+                    .any(|message| message.metadata.output_token_limit_reached)
+                && accumulator.iter().all(is_empty_response)
+            {
+                let mut message = accumulator
+                    .into_iter()
+                    .last()
+                    .unwrap_or_else(Message::assistant);
+                message.content.clear();
+                message.metadata.user_visible = false;
+                message.metadata.agent_visible = true;
+                let message = emit.message(message).await;
+                usage_effects.push(E::from(message));
+            } else {
+                usage_effects.extend(accumulator.into_iter().map(|message| E::from(message)));
+            }
             applied(usage_effects)
         }
         .instrument(span)
@@ -583,5 +633,10 @@ mod tests {
         assert!(!is_empty_response(
             &Message::assistant().with_content(MessageContent::thinking("", "sig-omitted"))
         ));
+    }
+
+    #[test]
+    fn whitespace_only_text_is_an_empty_response() {
+        assert!(is_empty_response(&Message::assistant().with_text(" \n\t ")));
     }
 }
