@@ -6,7 +6,7 @@ use rmcp::{
         CallToolResult, ContentBlock, ErrorCode, ErrorData, Implementation, InitializeResult,
         ListResourcesResult, MetaObject, PaginatedRequestParams, ReadResourceRequestParams,
         ReadResourceResponse, ReadResourceResult, Resource, ResourceContents, ServerCapabilities,
-        ServerInfo,
+        ServerConfig,
     },
     service::RequestContext,
     tool, tool_handler, tool_router, RoleServer, ServerHandler,
@@ -625,7 +625,7 @@ impl Default for AutoVisualiserRouter {
 
 #[tool_handler(router = self.tool_router)]
 impl ServerHandler for AutoVisualiserRouter {
-    fn get_info(&self) -> ServerInfo {
+    fn get_info(&self) -> ServerConfig {
         InitializeResult::new(
             ServerCapabilities::builder()
                 .enable_tools()
