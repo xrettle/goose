@@ -811,7 +811,6 @@ async fn build_test_pipeline(
             elicitation_handler: None,
             protocol_version: None,
         },
-        false,
     ));
     let permission_manager = Arc::new(PermissionManager::new(temp_dir.path().join("permissions")));
     let mut tool_inspection_manager = ToolInspectionManager::new();

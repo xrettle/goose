@@ -1498,7 +1498,6 @@ mod tests {
             providers: Default::default(),
             session_manager,
             scheduler: None,
-            use_login_shell_path: false,
         }
     }
 
