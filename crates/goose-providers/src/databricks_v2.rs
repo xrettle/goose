@@ -395,6 +395,8 @@ impl DatabricksV2Provider {
             &ImageFormat::OpenAi,
             true,
         )?;
+        // MLflow chat uses system; Gemini rejects the OpenAI developer role.
+        payload["messages"][0]["role"] = "system".into();
         if is_model_service {
             payload["model"] = Value::String(model_config.model_name.clone());
         }
